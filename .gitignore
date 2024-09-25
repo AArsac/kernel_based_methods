@@ -1,0 +1,5 @@
+## ignore virtual envs
+space2/
+
+##  other files
+__pycache__/
