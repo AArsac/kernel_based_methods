@@ -116,19 +116,71 @@ def common_confounder(sample_size, alpha, beta, params, noise):
     return {'X' : X_t, 'Y': Y_t, 'params': parameters}
 
 
+
+
+def simulate_iid_data(num_samples=100,param = {}, type=None):
+    '''
+    type = string: 'i','ii' or 'iii'
+    '''
+    
+    if type == 'i':
+        l = param['l']
+        def f_density(l, x, y):
+            return (1 /(4 * np.pi**2))*(1+np.sin(l* x)*np.sin(l*y))
+
+        X = np.zeros(num_samples)
+        Y = np.zeros(num_samples)
+        i = 0
+        while i !=num_samples :
+            # simulate X, Y samples
+            Xp = np.random.uniform(-np.pi, np.pi)
+            Yp = np.random.uniform(-np.pi, np.pi)
+
+            # Compute joint density values
+            Z1 = f_density(l, Xp, Yp)
+
+            #sample from the density
+            u = np.random.uniform()
+            if u <= Z1:
+                X[i] = Xp
+                Y[i] = Yp
+                i+=1
+
+    if type == 'ii':
+        l = param['l']
+        L = np.random.choice(np.arange(1, l + 1), num_samples)
+        Theta = np.random.uniform(0, 2 * np.pi, num_samples)
+        epsilon_1 = np.random.normal(0, 1, num_samples)
+        epsilon_2 = np.random.normal(0, 1, num_samples)
+
+        # Simulate X and Y
+        X = L * np.cos(Theta) + epsilon_1 / 4
+        Y = L * np.sin(Theta) + epsilon_2 / 4
+
+
+
+
+    if type == 'iii':
+        rho = param['rho']
+        ## simulations
+        X = np.random.uniform(low = -1, high = 1, size = num_samples)
+        epsilon = np.random.normal(loc = 0, scale = 1, size = num_samples)
+        Y = np.abs(X)**rho * epsilon
+    
+    res = {'X' : X, 'Y' : Y, 'params' : param}
+    return res
+
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
     import pandas as pd
     
     
-    parameters = {'alpha': 0.4, 'beta':0.2, 
+    parameters = {'alpha': 0.5, 'beta':0.42, 
                   'params' : {'sigma' : 0.01}
                 }
     
-    ts_dict = Xt_inde_Yt(5, alpha = parameters['alpha'], 
+    ts_dict = Xt_inde_Yt(sample_size = 200, alpha = parameters['alpha'], 
                      beta = parameters['beta'], 
-                     params = parameters['params'],
-                     noise = 'gaussian')
+                     paramX= 0.1, paramY = 0.21)
 
     df = pd.DataFrame(ts_dict)
-    print(df.head())

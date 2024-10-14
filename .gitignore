@@ -3,3 +3,8 @@ space2/
 
 ##  other files
 __pycache__/
+
+src/tests/approximation_Vstat.R
+
+Untitled.ipynb
+test_notebook.ipynb
