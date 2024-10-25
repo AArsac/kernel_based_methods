@@ -1,8 +1,3 @@
-'''
-here we defined functions to compute the shifted test as in Chwialkowski and Gretton 2014,
-coupled with some optimization methods as in El Amri, Marrel 2021
-'''
-
 import numpy as np
 
 from scipy import stats,optimize
@@ -69,7 +64,7 @@ def generate_shifted_series(data, A, B, k):
 def compute_V_stat(Lx,Ly):
     '''
     Compute the estimator of HSIC : T = 1/n**2 Tr(L_xL_y),
-    with L_x, L_y doubly centered Gram matrices
+    with L_x, L_y doubly centered Gram matrices with size (n x n)
     
     Do not compute Tr(L_x L_y) directly, use the fact that 
     Tr(L_x L_y) = Sum(L_x * L_y) where A*B is the Hadamard between A and B
@@ -77,7 +72,7 @@ def compute_V_stat(Lx,Ly):
     n = Lx.shape[0]
 
     ##doubly center the kernel matrices
-    Lx = utils.center_matrix(Lx)
+    Lx = utils.center_matrix(Lx) 
     Ly = utils.center_matrix(Ly)
     # compute the test statistic
     T = 1/n**2 * np.sum(Lx * Ly)

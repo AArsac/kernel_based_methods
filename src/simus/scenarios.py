@@ -81,11 +81,12 @@ def Xt_causes_Yt(sample_size, alpha, beta, paramX, paramY, non_linear = True):
     
     return {'X' : X_t, 'Y': Y_t, 'params':parameters}
 
-def common_confounder(sample_size, alpha, beta, params, noise):
+def common_confounder(sample_size, alpha, beta, gamma, paramX, paramY, paramC):
     '''
     '''
     ## generate confounding time series
-    C = f.generate_random_process(sample_size= sample_size, alpha = 0.2, param  = {'sigma':0.01}, noise = 'gaussian')
+    
+    C = f.generate_random_process(sample_size= sample_size, alpha = gamma, param  = {'sigma':paramC}, noise = 'gaussian')
     
     ## initialize X_t and Y_t
     X_t= np.random.uniform(low = 0.1, high = 0.5, size = ((sample_size,)) )
@@ -94,30 +95,53 @@ def common_confounder(sample_size, alpha, beta, params, noise):
     
     ## select which non-linear function to apply on C in each series
     rd_x = np.random.randint(0, high  = 4)
+    # rd_x = 4
     fx = f.f_for_param(rd_x)
     print('non linear function for C_x :', fx)
     rd_y = np.random.randint(0, high  = 4)
+    # rd_y = 4
     fy = f.f_for_param(rd_y)
     print('non linear function for C_y :', fy)
     
     ## simulate the series 
     for j in range(1,sample_size):
-        eps_x = f.update_variables(method = noise, parameters= params)
-        eps_y = f.update_variables(method = noise, parameters= params)
+        eps_x = paramX * np.random.normal()
+        eps_y = paramY * np.random.normal()
         X_t[j] = alpha * X_t[j-1] + f.f_nlinear(rand_int= rd_x, val= C[j] ) + eps_x
         Y_t[j] = beta * Y_t[j-1] + f.f_nlinear(rand_int = rd_y, val =  C[j])  + eps_y
     
     ## save simulation parameters
     parameters = {'alpha' : alpha, 'beta' : beta,
-                  'param_noise' : params,
-                  'noise': noise,
+                  'gamma' : gamma,
+                  'param_noiseX' : paramX,
+                  'param_noiseY': paramY,
+                  'param_noiseC': paramC,
                   'fx' : fx,
                   'fy': fy}
     return {'X' : X_t, 'Y': Y_t, 'params': parameters}
 
-
-
-
+def common_confounder_iid(sample_size, alpha, beta, paramC, update_method):
+    '''
+    Generate time series X,Y such that 
+    X = f_x(X_t-1, C, \epsilon_t)
+    Y = f_y(Y_t-1, C, \gamma_t)
+    with C an additive noise, making X and Y correlated
+    '''
+    Xt = np.random.uniform(low = 0.01, high = 0.5, size = ((sample_size,)))
+    Yt = np.random.uniform(low = 0.01, high = 0.5, size = ((sample_size,)))
+    
+    for t in range(1,sample_size):
+        eps,eta = f.update_variables(update_method, paramC)
+        Xt[t] = alpha * Xt[t-1] + eps #+ np.random.normal(0, scale = paramX)
+        Yt[t] = beta * Yt[t-1] + eta #+ np.random.normal(0, scale = paramY)
+    
+    parameters = {'alpha' : alpha, 'beta' : beta,
+                #   'param_noiseX' : paramX,
+                #   'param_noiseY': paramY,
+                  'param_C': paramC,
+                  }    
+    return {'X':Xt, 'Y': Yt, 'params': parameters}
+    
 def simulate_iid_data(num_samples=100,param = {}, type=None):
     '''
     type = string: 'i','ii' or 'iii'

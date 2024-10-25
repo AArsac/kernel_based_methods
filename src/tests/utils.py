@@ -68,7 +68,7 @@ def set_bandwidth(data, method):
         width = set_width_median(data)
     return width
 
-# def center_matrix(K):
+def center_matrix(K):
     '''
     Do not center with HKH with H = I -1/n 11^T (complexity O(n^3))
     --> use sums: 
@@ -124,15 +124,15 @@ def generate_permuted_matrices(M, B):
 
     return permuted_samples
 
-def center_matrix(A):
-    ### Double center the matrix A
-    n, m = A.shape
-    S_mat = np.sum(A) / (n * m)
-    S_rows = np.sum(A, axis=1) / m
-    S_cols = np.sum(A, axis=0) / n
+# def center_matrix(A):
+#     ### Double center the matrix A
+#     n, m = A.shape
+#     S_mat = np.sum(A) / (n * m)
+#     S_rows = np.sum(A, axis=1) / m
+#     S_cols = np.sum(A, axis=0) / n
 
-    B = A - np.outer(S_rows, np.ones(m)) - np.outer(np.ones(n), S_cols) + S_mat
-    return B
+#     B = A - np.outer(S_rows, np.ones(m)) - np.outer(np.ones(n), S_cols) + S_mat
+#     return B
 
 
 def generate_unique_permutations(var, B):
@@ -223,7 +223,7 @@ def get_asymptotic_gamma_params(Kx, Ky):
     ## estimation of the mean and variance
     mean = (EX - EXX) * (EY - EYY) /n
     var = 2*(n - 4)*(n -5) / (n* (n - 1) * (n - 2)*(n - 3))* meannondiag(Bxy)
-    print('mean asymptotic gamma:', mean, 'var asymptotic gamma:', var)
+    # print('mean asymptotic gamma:', mean, 'var asymptotic gamma:', var)
     
     ## method of moments for Gamma distrib params
     shape = (mean **2) / var
@@ -287,26 +287,25 @@ def gamma_approx( KX, KY):
     # res:          dict           (containing parameters of Gamma distrib)
 
     n = KX.shape[0]
-    
-    # Compute matrices A and W (for HSICXY)
+    # Center matrices --> get A and W 
     A = center_matrix(KX)
     W = center_matrix(KY)
     
     # Compute moments for Tr(A W)
     mom = compute_mom_TrAW(A, W)
     
-    # Parametric estimation of the p-value
+    # get parameters for 1/n**2 Tr(A,W)
     esp = mom[0]
     var = mom[1]
     # print('normalized mean gamma approx', esp/n**2 )
     # print('normalized var gamma approx', var/n**4)
-    # Method of moments for Tr(A W)
+    
+    # Method of moments for 1/n**2 Tr(A W)
     shape_TrAW = (esp**2) / var
     scale_TrAW = var / esp
-
-    # Parameters for HSIC(X, Y) = Tr(A W) / (n^2)
-    alpha = shape_TrAW
-    beta = scale_TrAW /n**2
+    
+    alpha = shape_TrAW 
+    beta = scale_TrAW / n**2
     # print('alpha', alpha, 'beta', beta)
     res = {'shape': alpha, 'scale' : beta}
     return res
@@ -321,24 +320,24 @@ def compute_mom_TrAW(A, W):
     denom2 = (n+1) * n * (n-1) * (n-2) * (n-3)
 
     # Matrix operations
-    tr_W = np.sum( np.diag(W) )
-    tr_W2 = np.sum( np.diag(W) **2)
-    sum_W2 = np.sum(W**2)
-    # tr_W = np.trace(W)
-    # tr_W2 = np.trace(W**2)
-    # sum_W2 = np.sum(W*W)
+    # tr_W = np.sum( np.diag(W) )
+    # tr_W2 = np.sum( np.diag(W) **2)
+    # sum_W2 = np.sum(W**2)
+    tr_W = np.trace(W)
+    tr_W2 = np.trace(W**2)
+    sum_W2 = np.sum(W*W)
 
     # Terms used in the final formulas
     O1_W = (n-1) * sum_W2 - tr_W**2
     O2_W = n * (n+1) * tr_W2 - (n-1) * (tr_W**2 + 2 * sum_W2)
 
     # Matrix A
-    tr_A = np.sum( np.diag(W))
-    tr_A2 = np.sum(np.diag(A) **2)
-    sum_A2 = np.sum(A**2)
-    # tr_A = np.trace(A)
-    # tr_A2 = np.trace(A**2)
-    # sum_A2 = np.sum(A*A)
+    # tr_A = np.sum( np.diag(A))
+    # tr_A2 = np.sum(np.diag(A) **2)
+    # sum_A2 = np.sum(A**2)
+    tr_A = np.trace(A)
+    tr_A2 = np.trace(A**2)
+    sum_A2 = np.sum(A*A)
     # Terms for A
     O1_A = (n-1) * sum_A2 - tr_A**2
     O2_A = n * (n+1) * tr_A2 - (n-1) * (tr_A**2 + 2 * sum_A2)
@@ -350,9 +349,10 @@ def compute_mom_TrAW(A, W):
     return np.array([esp, var])
 
 
-
-########### Code from Reda El Amri and Gabriel Sarazin to compute the 3 moments of the Pearson 3 distrib #########
-
+###############################################################
+########### Code from Reda El Amri and Gabriel Sarazin ########
+######### Compute 3 first moments of Pearson 3 distrib ########
+###############################################################
 
 def G(A):
     dA = np.diag(A)
@@ -361,12 +361,12 @@ def G(A):
     T2 = np.sum(A2c)
     dA2 = dA**2
     S2 = np.sum(dA2)
-    A2m = A @ A
+    A2m = np.dot(A,A)
     T3 = np.sum(A2m * A)
     S3 = np.sum(dA2 * dA)
     U = np.sum(A2c * A)
     R = np.dot(dA, np.diag(A2m))
-    B = np.dot(dA, A @ dA)
+    B = np.dot(dA,np.dot(A, dA))
     return np.array([T, T2, S2, T3, S3, U, R, B])
 
 def pearson3_moments_cpt(LXi, LY):
@@ -384,7 +384,7 @@ def pearson3_moments_cpt(LXi, LY):
     results = np.vstack([out1, out2])
 
     T, T2, S2, T3, S3, U, R, B = results[:, 0], results[:, 1], results[:, 2], results[:, 3], results[:, 4], results[:, 5], results[:, 6], results[:, 7]
-    print('T pe3', T)
+    # print('T pe3', T)
     # Formula for the first moment
     m1_pe3 = np.prod(T) / n + np.prod(-T) / (n * (n - 1))
 
@@ -423,9 +423,8 @@ def pearson3_moments_cpt(LXi, LY):
     # Useful characteristics
     mean_pe3 = m1_pe3
     var_pe3 = m2_pe3 - m1_pe3**2
-    sk_pe3 = (m3_pe3 - 3 * m1_pe3 * var_pe3 - m1_pe3**3) / (np.sqrt(var_pe3)**3)
+    sk_pe3 = (m3_pe3 -  3* m1_pe3 * var_pe3 - m1_pe3**3) / (np.sqrt(var_pe3)**3)
     
-
     return {"mean": mean_pe3, "variance": var_pe3, "skewness": sk_pe3}
 
 def pearson3_param_cpt(LXi, LY):
@@ -434,12 +433,12 @@ def pearson3_param_cpt(LXi, LY):
     mean_pe3 = mom["mean"]
     var_pe3 = mom["variance"]
     sk_pe3 = mom["skewness"]
-    print('for pearson3 approx :', 'mean',mean_pe3/n**2,'var', var_pe3/n**4, 'skew', sk_pe3)
+    # print('for pearson3 approx :', 'mean',mean_pe3/n**2,'var', var_pe3/n**2, 'skew', sk_pe3)
     alpha_pe3 = 4 / (sk_pe3**2)
     beta_pe3 = np.sqrt(var_pe3) * sk_pe3 / 2
     gamma_pe3 = mean_pe3 - 2 * np.sqrt(var_pe3) / sk_pe3
 
-    return {'alpha':alpha_pe3,'beta': beta_pe3, 'gamma': gamma_pe3}
+    return {'alpha':alpha_pe3,'beta': beta_pe3 / n**2, 'gamma': gamma_pe3/ n**2}
 
 
 
@@ -455,7 +454,8 @@ def generate_RFF(X, D, sigma):
     Parameters:
     - X: array of shape (n_samples,d)  (d=1 or d=0 in our setting)
     - D: int, number of random features 
-    - sigma: float, the bandwidth parameter of the Gaussian kernel.
+    - sigma: float, the bandwidth parameter of the Gaussian kernel. 
+            /!\ here sigma is 1/(\sigma^2)
 
     Returns:
     - Gram matrix (n_samples, n_samples) approximated using random Fourier features.
@@ -467,9 +467,9 @@ def generate_RFF(X, D, sigma):
     d = 1
     # Sample random Fourier frequencies W 
     W = np.random.randn(D, d)
-    
-    # XWt = (1 / np.sqrt(sigma) ) * np.dot(X,W.T) 
-    XWt = 1/(sigma**2) * np.dot(X,W.T) 
+
+    # XWt = sigma * np.dot(X,W.T)
+    XWt = sigma * X @ W.T 
     # Sample random biases b uniformly from [0, 2*pi]
     # b = np.random.uniform(0, 2 * np.pi, size=D)
     Z1 = np.cos(XWt)
@@ -489,9 +489,13 @@ def compute_RFF_hsic(Zx,Zy):
     - T : RFF estimator of HSIC 
     '''
     n = np.shape(Zx)[0]
-    H = np.identity(n) - 1/n
+    # H = np.identity(n) - 1/n
+    Zx_centered = Zx - np.mean(Zx, axis=0, keepdims=True)
+    Zy_centered = Zy - np.mean(Zy, axis=0, keepdims=True)
 
+    # Calculate the RFF HSIC statistic
+    T = 1/(n**2) * linalg.norm(Zx_centered.T @ Zy_centered)**2
     ## compute test statistic
-    T = 1/(n**2) * np.linalg.norm(Zx.T @ H @ Zy)**2
+    # T = 1/(n**2) * np.linalg.norm(Zx.T @ H @ Zy)**2
     
     return T

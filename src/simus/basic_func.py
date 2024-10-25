@@ -8,7 +8,7 @@ obj: simulate time series under several dependence scenarios:
 '''
 
 import numpy as np
-
+from scipy.spatial.distance import cdist, pdist, squareform
 
 
 def scenario_i(l):
@@ -158,8 +158,12 @@ def f_nlinear(rand_int,val):
         print('rand_int out of range')
         return 0
     if rand_int == 0:
-        
-        return np.abs(val)
+        # distx = cdist(var, var, 'sqeuclidean')
+        # var = np.reshape(var,(len(var),1))
+        # distx = pdist(var, 'sqeuclidean')
+        # return np.exp(-distx)
+        return np.exp(-np.sqrt(val**2))
+        # return np.abs(val)
     
     if rand_int ==1:
         
@@ -177,7 +181,7 @@ def f_nlinear(rand_int,val):
 
 def f_for_param(rand_int):
     '''
-    function only to wirte in parameters
+    function only to write in parameters
     Parameters
     ----------
     rand_int : a random integer between 0 and 4
@@ -191,7 +195,8 @@ def f_for_param(rand_int):
         print('rand_int out of range')
         return 0
     if rand_int == 0:
-        res = 'abs'
+        # res = 'abs'
+        res = 'exp'
     
     if rand_int ==1:
         res = 'tanh'
