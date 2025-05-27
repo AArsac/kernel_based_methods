@@ -9,31 +9,7 @@ from statsmodels.tsa.stattools import acf
 from src.tests import utils
 
 
-def estimate_head_and_tail(X, Y):
-    '''
-    Find a time lag A such that the dependence between X_t and Y_t+A 
-    is small. The upper bound is the last lag of the series.
-    '''
-    n = X.shape[0]
-    ## Compute auto-correlation of a combined process X,Y
-    #  to find index where the dependence becomes weak
-    combined = X + Y
-    acf_values = acf(combined, nlags=50, fft=True)
-    smallest_acf = np.where(acf_values < 0.2)[0] ## first value such that the dependence is under 0.2 (arbitrary)
-    if len(smallest_acf) == 0:
-        head = 40
-    else:
-        head = smallest_acf[0]
-    if head > min(75, n):
-        print('Warning: possibly long memory process, the output of test might be FALSE.')
-    head = min(head, 50)
-    tail = n
-    if (tail - head) < 100:
-        print('Warning: using less than 100 points for a bootstrap approximation, stability of the test might be affected')
-    
-    if (tail-head) > 500:
-        tail = 550
-    return head, tail
+
 
 
 def generate_shifted_series(data, A, B, k):
@@ -78,11 +54,9 @@ def compute_V_stat(Lx,Ly):
     T = 1/n**2 * np.sum(Lx * Ly)
     return T
 
-
-def RFF_shift_test(data_x, data_y,param = [], method = 'median', head = 10, tail = 30, approx_min_lag = 'empirical', nb_features = 20):
+def RFF_shift_test(data_x, data_y, param=[], method='median', head=10, tail=30, kernel = 'gaussian', approx_min_lag='estimated', nb_features=10):
     '''
-    Compute a simple shift test of independence as in Chwialkovski & Gretton 2014
-    approximate the kernels and test stat with Random Fourier Features
+    Compute a shift-HSIC based test of independence with Random Fourier Features
     
     parameters:
     - data_x, data_y: time series data X_t and Y_t of size (n x 1) resp.
@@ -90,42 +64,112 @@ def RFF_shift_test(data_x, data_y,param = [], method = 'median', head = 10, tail
     - method: 'median' or 'empirical' if no bandwidths parameters are given, define them automatically
     - head: fixed A parameter in the shifting procedure --> At which lag to start the shifts (such that the autocorrelation is weak enough)
     - tail: fixed B param in the shifting procedure 
-    - approx_min_lag: 'empirical' or 'estimated' --> To esimate parameters head and tail. 
-                    If 'estimated' --> use acf to determine which lag in the series is independent enough of a fixed time step t
+    - approx_min_lag: 'empirical' or 'estimated' --> To estimate parameters head and tail. 
+                      If 'estimated', use acf to determine which lag in the series is independent enough of a fixed time step t
     - nb_features: number of features to approximate the kernels (nb_features << n)
-    returns:
-    - results: dict{'pval', 'test_statistic', 'test_stat_H0'}, with T_stat_H0 all the test statistics computed on each shift series
-    '''
-    if len(param)==0:
-        sigma_x = utils.set_bandwidth(data_x, method = method)
-        sigma_y = utils.set_bandwidth(data_y, method = method)
-        param = np.array([sigma_x,sigma_y])
-    Zx = utils.generate_RFF(data_x, D = nb_features, sigma = param[0])  # size n x Dx
-    Zy = utils.generate_RFF(data_y, D = nb_features, sigma = param[1])  # size n x Dy
     
+    returns:
+    - results: dict{'pval', 'test_statistic', 'test_stat_H0'}, with T_stat_H0 as the test statistics computed on each shifted series
+    '''
+    if kernel !='Gaussian':
+        print('Error: RFF-Shift-test only defined for Gaussian kernel')
+        return  {'pval': 0, 'test_statistic': 0, 'test_stat_H0': []}
+    
+    if len(param) == 0:
+        sigma_x = utils.set_bandwidth(data_x, method=method)
+        sigma_y = utils.set_bandwidth(data_y, method=method)
+        param = np.array([sigma_x, sigma_y])
+        
+    # Precompute values 
+    sigma_x2 = 1 / (param[0] ** 2)
+    sigma_y2 = 1 / (param[1] ** 2)
+    
+    # Generate random features for data_x and data_y
+    Zx = utils.generate_RFF(data_x, D=nb_features, sigma=sigma_x2)  # size n x Dx
+    Zy = utils.generate_RFF(data_y, D=nb_features, sigma=sigma_y2)  # size n x Dy
+    
+    # Compute the test statistic for the original data
     T = utils.compute_RFF_hsic(Zx, Zy)
     
-    ## generate shifted processes
+    # Determine the shift range
     if approx_min_lag == 'empirical':
-        A = head
-        B = tail
+        A, B = head, tail
     elif approx_min_lag == 'estimated':
-        A,B = estimate_head_and_tail(data_x, data_y)
-    print('autocorr A:', A)
-    ## estimate null distribution of test statistic
+        A, B = utils.estimate_head_and_tail(data_x, data_y)
+    
+    print('Autocorr lag A:', A)
+    
+    # Estimate null distribution of test statistic using shifted feature matrix
     T_shift = []
-    for k in range(A,B):
-        Y_shift = generate_shifted_series(data_y, A, B, k)
-        Zy_shift = utils.generate_RFF(Y_shift, D = nb_features, sigma = param[1])
+    n = data_y.shape[0]
+    for k in range(A, B):
+        # Shift the rows of Zy by k steps
+        Zy_shift = np.roll(Zy, shift=k, axis=0)
+        
+        # Compute HSIC for the shifted feature matrix
         T_s = utils.compute_RFF_hsic(Zx, Zy_shift)
         T_shift.append(T_s)
     
+    # Calculate p-value
     pval = (T < T_shift).mean()
-    results = {'pval':pval, 'test_statistic':T, 'test_stat_H0':T_shift}
+    results = {'pval': pval, 'test_statistic': T, 'test_stat_H0': T_shift}
     return results
 
 
-def random_shift_test(data_x, data_y, param = [], method = 'median', head = 10, tail = 30, approx_min_lag = 'empirical', nb_shifts = 50):
+
+
+
+# def RFF_shift_test(data_x, data_y,param = [], method = 'median', head = 10, tail = 30, approx_min_lag = 'empirical', nb_features = 20):
+#     '''
+#     Compute a simple shift test of independence as in Chwialkovski & Gretton 2014
+#     approximate the kernels and test stat with Random Fourier Features
+    
+#     parameters:
+#     - data_x, data_y: time series data X_t and Y_t of size (n x 1) resp.
+#     - param: fixed kernel bandwidths parameters
+#     - method: 'median' or 'empirical' if no bandwidths parameters are given, define them automatically
+#     - head: fixed A parameter in the shifting procedure --> At which lag to start the shifts (such that the autocorrelation is weak enough)
+#     - tail: fixed B param in the shifting procedure 
+#     - approx_min_lag: 'empirical' or 'estimated' --> To esimate parameters head and tail. 
+#                     If 'estimated' --> use acf to determine which lag in the series is independent enough of a fixed time step t
+#     - nb_features: number of features to approximate the kernels (nb_features << n)
+#     returns:
+#     - results: dict{'pval', 'test_statistic', 'test_stat_H0'}, with T_stat_H0 all the test statistics computed on each shift series
+#     '''
+#     if len(param)==0:
+#         sigma_x = utils.set_bandwidth(data_x, method = method)
+#         sigma_y = utils.set_bandwidth(data_y, method = method)
+#         param = np.array([sigma_x,sigma_y])
+#     ## precompute values 
+#     sigma_x2 = 1/(param[0]**2)
+#     sigma_y2 = 1/(param[1]**2)
+    
+#     Zx = utils.generate_RFF(data_x, D = nb_features, sigma = sigma_x2)  # size n x Dx
+#     Zy = utils.generate_RFF(data_y, D = nb_features, sigma = sigma_y2)  # size n x Dy
+    
+#     T = utils.compute_RFF_hsic(Zx, Zy)
+    
+#     ## generate shifted processes
+#     if approx_min_lag == 'empirical':
+#         A = head
+#         B = tail
+#     elif approx_min_lag == 'estimated':
+#         A,B = utils.estimate_head_and_tail(data_x, data_y)
+#     print('autocorr A:', A)
+#     ## estimate null distribution of test statistic
+#     T_shift = []
+#     for k in range(A,B):
+#         Y_shift = generate_shifted_series(data_y, A, B, k)
+#         Zy_shift = utils.generate_RFF(Y_shift, D = nb_features, sigma = param[1])
+#         T_s = utils.compute_RFF_hsic(Zx, Zy_shift)
+#         T_shift.append(T_s)
+    
+#     pval = (T < T_shift).mean()
+#     results = {'pval':pval, 'test_statistic':T, 'test_stat_H0':T_shift}
+#     return results
+
+
+def random_shift_test(data_x, data_y, param = [], method = 'median', kernel = 'gaussian', head = 10, tail = 30, approx_min_lag = 'empirical', nb_shifts = 50):
     '''
     Compute a shift test of independence as in Chwialkovski & Gretton 2014 but with random shifts
     
@@ -147,8 +191,8 @@ def random_shift_test(data_x, data_y, param = [], method = 'median', head = 10, 
         sigma_y = utils.set_bandwidth(data_y, method = method)
         param = np.array([sigma_x,sigma_y])
     
-    Lx = utils.compute_Gram_matrix(param[0], data_x)
-    Ly = utils.compute_Gram_matrix(param[1], data_y)
+    Lx = utils.compute_Gram_matrix(param[0], data_x, kernel = kernel)
+    Ly = utils.compute_Gram_matrix(param[1], data_y, kernel = kernel)
     T = compute_V_stat(Lx, Ly)
 
     ## generate shifted processes
@@ -156,7 +200,7 @@ def random_shift_test(data_x, data_y, param = [], method = 'median', head = 10, 
         A = head
         B = tail
     elif approx_min_lag == 'estimated':
-        A,B = estimate_head_and_tail(data_x, data_y)
+        A,B = utils.estimate_head_and_tail(data_x, data_y)
     print('autocorr A:', A)
     ## estimate null distribution of test statistic
     T_shift = []
@@ -164,7 +208,7 @@ def random_shift_test(data_x, data_y, param = [], method = 'median', head = 10, 
     random_k = np.random.randint(low = A, high = B, size = nb_shifts)
     for k in random_k:
         Y_shift = generate_shifted_series(data_y, A, B, k)
-        Ly_shift = utils.compute_Gram_matrix(param[1],Y_shift)
+        Ly_shift = utils.compute_Gram_matrix(param[1],Y_shift, kernel = kernel)
         T_s = compute_V_stat(Lx, Ly_shift)
         T_shift.append(T_s)
 
@@ -177,7 +221,7 @@ def random_shift_test(data_x, data_y, param = [], method = 'median', head = 10, 
     return results
 
 
-def shift_test(data_x, data_y, param = [], method = 'median', head = 10, tail = 30, approx_min_lag = 'empirical', nb_shifts = 0):
+def shift_test(data_x, data_y, param = [], method = 'median', head = 10, tail = 30, kernel = 'gaussian', approx_min_lag = 'estimated', nb_shifts = 500):
     '''
     Compute a simple shift test of independence as in Chwialkovski & Gretton 2014
     
@@ -199,30 +243,31 @@ def shift_test(data_x, data_y, param = [], method = 'median', head = 10, tail = 
         sigma_y = utils.set_bandwidth(data_y, method = method)
         param = np.array([sigma_x,sigma_y])
     
-    Lx = utils.compute_Gram_matrix(param[0], data_x)
-    Ly = utils.compute_Gram_matrix(param[1], data_y)
+    Lx = utils.compute_Gram_matrix(param[0], data_x, kernel = kernel)
+    Ly = utils.compute_Gram_matrix(param[1], data_y, kernel = kernel)
     T = compute_V_stat(Lx, Ly)
 
-    ## generate shifted processes
+    ## compute AS --> shift range
     if approx_min_lag == 'empirical':
         A = head
         B = tail
     elif approx_min_lag == 'estimated':
-        A,B = estimate_head_and_tail(data_x, data_y)
+        A,B = utils.estimate_head_and_tail(data_x, data_y)
     print('autocorr A:', A)
     ## estimate null distribution of test statistic
     T_shift = []
     if nb_shifts != 0:
-        random_k = np.random.randint(low = A, high = B, size = nb_shifts)
-        for k in random_k:
+        # random_k = np.random.randint(low = A, high = B, size = nb_shifts)
+        for k in range(A,B):
             Y_shift = generate_shifted_series(data_y, A, B, k)
-            Ly_shift = utils.compute_Gram_matrix(param[1],Y_shift)
+            Ly_shift = utils.compute_Gram_matrix(param[1],Y_shift, kernel = kernel)
+            # Ly_shift = np.roll(Ly,shift = k, axis = 0)
             T_s = compute_V_stat(Lx, Ly_shift)
             T_shift.append(T_s)
     else :
         for k in range(A,B):
             Y_shift = generate_shifted_series(data_y, A, B, k)
-            Ly_shift = utils.compute_Gram_matrix(param[1],Y_shift)
+            Ly_shift = utils.compute_Gram_matrix(param[1],Y_shift, kernel = kernel)
             T_s = compute_V_stat(Lx, Ly_shift)
             T_shift.append(T_s)
 
@@ -237,7 +282,7 @@ def shift_test(data_x, data_y, param = [], method = 'median', head = 10, tail = 
 
 
 
-def parametric_shift_test(data_x, data_y, param = [], method = 'median', head = 10, tail = 30, approx_min_lag = 'estimated', ):
+def parametric_shift_test(data_x, data_y, param = [], method = 'median', head = 10, tail = 30, kernel = 'gaussian',approx_min_lag = 'estimated', ):
     '''
     Compute a simple shift test of independence as in Chwialkovski & Gretton 2014
     method: 'median' or 'empirical' --> How to adjust bandwidths
@@ -248,8 +293,8 @@ def parametric_shift_test(data_x, data_y, param = [], method = 'median', head = 
         sigma_x = utils.set_bandwidth(data_x, method = method)
         sigma_y = utils.set_bandwidth(data_y, method = method)
         param = np.array([sigma_x,sigma_y])
-    Lx = utils.compute_Gram_matrix(param[0], data_x)
-    Ly = utils.compute_Gram_matrix(param[1], data_y)
+    Lx = utils.compute_Gram_matrix(param[0], data_x, kernel = kernel)
+    Ly = utils.compute_Gram_matrix(param[1], data_y, kernel = kernel)
     T = compute_V_stat(Lx,Ly)
 
     ## generate shifted processes
@@ -257,13 +302,13 @@ def parametric_shift_test(data_x, data_y, param = [], method = 'median', head = 
         A = head
         B = tail
     elif approx_min_lag == 'estimated':
-        A,B = estimate_head_and_tail(data_x, data_y)
+        A,B = utils.estimate_head_and_tail(data_x, data_y)
 
     ## estimate null distribution
     T_shift = []
     for k in range(A,B):
         Y_shift = generate_shifted_series(data_y, A, B, k)
-        Ly_shift = utils.compute_Gram_matrix(param[1], Y_shift)
+        Ly_shift = utils.compute_Gram_matrix(param[1], Y_shift, kernel = kernel)
         T_shift.append(compute_V_stat(Lx,Ly_shift))
     
     T_shift = np.array(T_shift)

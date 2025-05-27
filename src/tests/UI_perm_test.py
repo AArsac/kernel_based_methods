@@ -41,10 +41,14 @@ def compute_V_stat(Lx,Ly):
     T = 1/n**2 * np.sum(Lx * Ly)
     return T
 
+##########################################################
+
+############ PERM HSIC ###################################
+
+##########################################################
 
 
-
-def permutation_test(data_x,data_y, param = [], method = 'median',  nb_permut = 500):
+def permutation_test(data_x,data_y, param = [], method = 'median', kernel = 'gaussian', nb_permut = 500):
     '''
     parameters :
     - data_x: 1-D array (n x 1)
@@ -63,15 +67,15 @@ def permutation_test(data_x,data_y, param = [], method = 'median',  nb_permut = 
         sigma_x = utils.set_bandwidth(data_x, method = method)
         sigma_y = utils.set_bandwidth(data_y, method = method)
         param = np.array([sigma_x,sigma_y])
-    Lx = utils.compute_Gram_matrix(param[0], data_x)
-    Ly = utils.compute_Gram_matrix(param[1], data_y)
+    Lx = utils.compute_Gram_matrix(param[0], data_x, kernel= kernel)
+    Ly = utils.compute_Gram_matrix(param[1], data_y, kernel = kernel)
     T = compute_V_stat(Lx,Ly)
 
     # Ly_permuted_list = generate_permuted_matrices(Ly,nb_permut)
     Y_perm = utils.generate_unique_permutations(data_y,nb_permut)
     T_perm_list = []
     for j in range(nb_permut):
-        Ly_perm = utils.compute_Gram_matrix(param[1],Y_perm[j])
+        Ly_perm = utils.compute_Gram_matrix(param[1],Y_perm[j], kernel = kernel)
         T_perm = compute_V_stat(Lx,Ly_perm)
         T_perm_list.append(T_perm)
         
@@ -83,8 +87,18 @@ def permutation_test(data_x,data_y, param = [], method = 'median',  nb_permut = 
     results = {'pval': pval, 'test_statistic': T, 'test_stat_H0': T_perm_list}
     return results
 
-def asymptotic_test(data_x, data_y, param = [], method = 'median'):
+#######################################################################
+
+############ ASYMPTOTIC GAMMA APPROXMATION ############################
+
+#######################################################################
+
+
+def asymptotic_test(data_x, data_y, param = [],kernel = 'gaussian', method = 'median'):
     '''
+    Method of moments to approximate the asymptotic distribution
+    of the HSIC test statistic (see Gretton et al. 2007)
+    
     parameters :
     - data_x: 1-D array (n x 1)
     - data_y: 1-D array (n x 1)
@@ -92,15 +106,15 @@ def asymptotic_test(data_x, data_y, param = [], method = 'median'):
     - method: 'median' or 'empirical'
 
     returns:
-        dict : {'pval' : pval, 'test_statistic': T}
+        dict : {'pval' : pval, 'test_statistic': T, 'params': param_gamma}
     
     '''
     if len(param)==0:
         sigma_x = utils.set_bandwidth(data_x, method = method)
         sigma_y = utils.set_bandwidth(data_y, method = method)
         param = np.array([sigma_x,sigma_y])
-    Lx = utils.compute_Gram_matrix(param[0], data_x)
-    Ly = utils.compute_Gram_matrix(param[1], data_y)
+    Lx = utils.compute_Gram_matrix(param[0], data_x, kernel = kernel)
+    Ly = utils.compute_Gram_matrix(param[1], data_y, kernel = kernel)
     T = compute_V_stat(Lx,Ly)    
     # param_gamma = utils.get_kappa(Lx, Ly)
     param_gamma = utils.get_asymptotic_gamma_params(Lx, Ly)
@@ -112,8 +126,18 @@ def asymptotic_test(data_x, data_y, param = [], method = 'median'):
     results = {'pval': pval, 'test_statistic': T, 'params': param_gamma }
     
     return results
-    
-def gamma_non_asympt_test(data_x, data_y, param = [], method = 'median'):
+
+
+
+
+#######################################################################
+
+##########  NON ASYMPTOTIC GAMMA APPROXMATION ########################
+
+#######################################################################
+
+
+def gamma_non_asympt_test(data_x, data_y, param = [],kernel = 'gaussian', method = 'median'):
     '''
     parameters :
     - data_x: 1-D array (n x 1)
@@ -131,8 +155,8 @@ def gamma_non_asympt_test(data_x, data_y, param = [], method = 'median'):
         sigma_x = utils.set_bandwidth(data_x, method = method)
         sigma_y = utils.set_bandwidth(data_y, method = method)
         param = np.array([sigma_x,sigma_y])
-    Lx = utils.compute_Gram_matrix(param[0], data_x)
-    Ly = utils.compute_Gram_matrix(param[1], data_y)
+    Lx = utils.compute_Gram_matrix(param[0], data_x, kernel = kernel)
+    Ly = utils.compute_Gram_matrix(param[1], data_y, kernel= kernel)
     T = compute_V_stat(Lx,Ly)    
     
     n = Lx.shape[0]
@@ -148,7 +172,14 @@ def gamma_non_asympt_test(data_x, data_y, param = [], method = 'median'):
        
     return results
 
-def RFF_perm_test(data_x, data_y, param = [], method = 'empirical', nb_permut = 500, nb_features = 10):
+###################################################
+
+############ RFF PERM HSIC ########################
+
+###################################################
+
+
+def RFF_perm_test(data_x, data_y, param = [], method = 'empirical', kernel = 'gaussian',nb_permut = 500, nb_features = 10):
     '''
     Random Fourier Features estimator of the HSIC 
     p value is computed using a permutation scheme
@@ -168,16 +199,20 @@ def RFF_perm_test(data_x, data_y, param = [], method = 'empirical', nb_permut = 
         sigma_x = utils.set_bandwidth(data_x, method = method)
         sigma_y = utils.set_bandwidth(data_y, method = method)
         param = np.array([sigma_x,sigma_y])
-    Zx = utils.generate_RFF(data_x, D = nb_features, sigma = param[0])  # size n x Dx
-    Zy = utils.generate_RFF(data_y, D = nb_features, sigma = param[1])  # size n x Dy
+    sigma_x2 = 1/(param[0]**2)
+    sigma_y2 = 1/(param[1]**2)
+    
+    Zx = utils.generate_RFF(data_x, D = nb_features, sigma = sigma_x2)  # size n x Dx
+    Zy = utils.generate_RFF(data_y, D = nb_features, sigma = sigma_y2)  # size n x Dy
     
     T = utils.compute_RFF_hsic(Zx, Zy)
     
     
-    Y_perm = utils.generate_unique_permutations(data_y,nb_permut)
+    # Y_perm = utils.generate_unique_permutations(data_y,nb_permut)
     T_perm_list = []
     for j in range(nb_permut):
-        Zy_perm = utils.generate_RFF(Y_perm[j], D = nb_features, sigma = param[1])
+        # Zy_perm = utils.generate_RFF(Y_perm[j], D = nb_features, sigma = param[1])
+        Zy_perm = Zy[np.random.permutation(np.shape(Zy)[0]), :]
         T_perm = utils.compute_RFF_hsic(Zx, Zy_perm)
         T_perm_list.append(T_perm)
         
@@ -190,7 +225,58 @@ def RFF_perm_test(data_x, data_y, param = [], method = 'empirical', nb_permut = 
     return results
 
 
-def pearson3_approx_test(data_x, data_y, param = [], method = 'median'):
+###################################################
+
+############ RFF GAMMA APPROXMATION ###############
+
+###################################################
+
+
+def RFF_Gamma_test(data_x, data_y, param = [], method = 'empirical', kernel = 'gaussian',nb_permut = 500, nb_features = 10):
+    '''
+    Compute the Gamma approximation where the parameters are computed 
+    based on the low rank approximations of the Gram matrices
+    parameters :
+        - data_x: 1-D array (n x 1)
+        - data_y: 1-D array (n x 1)
+        - param: np.array([\sigma_x, \sigma_y]) bandwidths parameters for kernel x, kernel y
+        - method: 'median' or 'empirical' to approximate kernel bandwidths
+        - nb_features : nb of Random Fourier Features to consider (<< n)
+    '''
+
+    if len(param)==0:
+        sigma_x = utils.set_bandwidth(data_x, method = method)
+        sigma_y = utils.set_bandwidth(data_y, method = method)
+        param = np.array([sigma_x,sigma_y])
+    sigma_x2 = 1/(param[0]**2)
+    sigma_y2 = 1/(param[1]**2)
+    
+    Zx = utils.generate_RFF(data_x, D = nb_features, sigma = sigma_x2)  # size n x Dx
+    Zy = utils.generate_RFF(data_y, D = nb_features, sigma = sigma_y2)  # size n x Dy
+    
+    T = utils.compute_RFF_hsic(Zx, Zy)
+    
+
+    
+    # Parametric estimation of the p-value
+    param_gamma = utils.RFF_gamma_params(Zx, Zy) ## Parameters for estimating 1/n**2 Tr(Lx Ly)
+    
+    #compute p-value
+    pval = 1 - gamma.cdf(T, a = param_gamma['shape'], scale= param_gamma['scale'] )
+    
+        
+    results = {'pval': pval, 'test_statistic': T, 'params': param_gamma }
+    
+    return results
+
+
+#######################################################################
+
+############ PEARSON III APPROXMATION #################################
+
+#######################################################################
+
+def pearson3_approx_test(data_x, data_y, param = [],kernel = 'gaussian', method = 'median'):
     '''
     parameters :
     - data_x: 1-D array (n x 1)
@@ -200,15 +286,15 @@ def pearson3_approx_test(data_x, data_y, param = [], method = 'median'):
     - nb_permu: integer, number of permutations for the test
 
     returns:
-        dict : {'pval' : pval, 'test_statistic': T}
+        dict : {'pval' : pval, 'test_statistic': T, }
     
     '''
     if len(param)==0:
         sigma_x = utils.set_bandwidth(data_x, method = method)
         sigma_y = utils.set_bandwidth(data_y, method = method)
         param = np.array([sigma_x,sigma_y])
-    Lx = utils.compute_Gram_matrix(param[0], data_x)
-    Ly = utils.compute_Gram_matrix(param[1], data_y)
+    Lx = utils.compute_Gram_matrix(param[0], data_x, kernel = kernel )
+    Ly = utils.compute_Gram_matrix(param[1], data_y, kernel = kernel)
     T = compute_V_stat(Lx,Ly)    
     
     # Parametric estimation of the p-value
@@ -222,7 +308,14 @@ def pearson3_approx_test(data_x, data_y, param = [], method = 'median'):
     results = {'pval': pval, 'test_statistic': T, 'params': param_pe3 }
        
     return results
-    
+
+
+
+#######################################################################
+
+############ EXPERIMENTS ###################################
+
+#######################################################################
 
 if __name__ == '__main__':
     import timeit
@@ -308,7 +401,7 @@ if __name__ == '__main__':
         
         
         #### RFF HISC ########
-        RFF_hsic = RFF_perm_test(X, Y, method = method, nb_features= np.int32(0.2*n), nb_permut= nb_permut)
+        RFF_hsic = RFF_perm_test(X, Y, method = method, nb_features= 15, nb_permut= nb_permut)
         
         Trff_list = RFF_hsic['test_stat_H0']
         Trff = RFF_hsic['test_statistic']
