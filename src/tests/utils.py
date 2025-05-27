@@ -4,6 +4,8 @@ from scipy import stats,optimize, linalg
 from scipy.spatial.distance import cdist, pdist, squareform
 # from sklearn.gaussian_process.kernels import RBF
 
+from sklearn.metrics import pairwise_distances
+from statsmodels.tsa.stattools import acf
 
 
 import math
@@ -37,15 +39,15 @@ def load_data(file_data):
 
 
 # kernel width using median trick
-def set_width_median(X: np.ndarray):
+def set_width_median(X):
     n = np.shape(X)[0]
     if n > 1000:
-        X = X[np.random.permutation(n)[:1000], :]
+        X = X[:1000, :]
     dists = squareform(pdist(X, 'euclidean'))
-    median_dist = np.median(dists[dists > 0])
-    width = np.sqrt(2.) * median_dist
-    theta = 1.0 / (width ** 2)
-    width = theta
+    width = np.median(dists[dists > 0])
+    # width = np.sqrt(2.) * median_dist
+    # theta = 1.0 / (width ** 2)
+    # width = theta
     return width
 
 
@@ -55,7 +57,8 @@ def set_bandwidth(data, method):
     - data = 1d-array
     - method : 'empirical' or 'median'
     '''
-    data = data.reshape((len(data),1))
+    if len(data.shape) == 1:
+        data = data.reshape(-1,1)
     if method == 'empirical':
         n = np.shape(data)[0]
         if n <= 200:
@@ -67,6 +70,55 @@ def set_bandwidth(data, method):
     if method == 'median':
         width = set_width_median(data)
     return width
+
+
+def compute_Gram_matrix(param,X, kernel = 'gaussian',y = None):
+    '''
+    parameters:
+        - param: bandwidth parameter
+        - data: data on which the Gram matrix is computed
+        - kernel: type of kernel in 'gaussian','laplacian','matern3','matern5'
+            where matern3 stands for matern 3/2 and matern 5 stands for matern 5/2
+    return:
+        K: Gram matrix 
+    
+    '''
+    kwx = param
+    
+    if len(X.shape) == 1:
+        X = X.reshape(-1,1)
+    # if len(Y.shape) == 1:
+    #     y = y.reshape((y.shape[0],1))
+    if y is None:
+        y=X
+       
+    if kernel == 'gaussian':
+    ## compute distance in norm2 between each data points
+        # distx = cdist(X, y, 'sqeuclidean')
+        distx = pairwise_distances(X,y,'sqeuclidean')
+        K = np.exp(-0.5 * distx * kwx**-2) #gaussian kernel k(x1,x2) = exp(- 0.5 *||x1-x2||^2 * \sigma_x^-2)
+    else:
+        ## compute euclidean distance between data points
+        # distx = cdist(X,y, metric = 'euclidean')
+        distx = pairwise_distances(X,y,'euclidean')
+        if kernel == 'laplacian':
+            ## compute Laplacian kernel
+            K = np.exp(-distx * kwx**-1)
+            
+        elif kernel =='matern3':
+            ## compute Matern 3/2 kernel
+            K = distx * np.sqrt(3) * kwx**-1
+            K = (1 + K) * np.exp(-K)
+            
+        elif kernel == 'matern5':
+            ## compute Matern 5/2 kernel
+            K = distx * np.sqrt(5) * kwx**-1
+            K = (1 + K + K**2 / 3) * np.exp(-K)
+        else:
+            print('kernel not implemented, please select between gaussian, laplacian, matern3, matern5')
+            return False
+    return K
+
 
 def center_matrix(K):
     '''
@@ -80,6 +132,32 @@ def center_matrix(K):
     return K - (K_colsums[None, :] + K_colsums[:, None]) / n + (K_allsum / n ** 2)
 
 
+
+def estimate_head_and_tail(X, Y):
+    '''
+    Find a time lag A such that the dependence between X_t and Y_t+A 
+    is small. The upper bound is the last lag of the series.
+    '''
+    n = X.shape[0]
+    ## Compute auto-correlation of a combined process X,Y
+    #  to find index where the dependence becomes weak
+    combined = X + Y
+    acf_values = acf(combined, nlags=50, fft=True)
+    smallest_acf = np.where(acf_values < 0.2)[0] ## first value such that the dependence is under 0.2 (arbitrary)
+    if len(smallest_acf) == 0:
+        head = 40
+    else:
+        head = smallest_acf[0]
+    if head > min(75, n):
+        print('Warning: possibly long memory process, the output of test might be FALSE.')
+    head = min(head, 50)
+    tail = n
+    if (tail - head) < 100:
+        print('Warning: using less than 100 points for a bootstrap approximation, stability of the test might be affected')
+    
+    if (tail-head) > 500:
+        tail = 550
+    return head, tail
 
 def save_data(folder, param, X , Y, simu_type = None):
     '''
@@ -152,20 +230,7 @@ def generate_unique_permutations(var, B):
     
     return np.array(list(unique_permutations))
 
-def compute_Gram_matrix(param,data):
-    '''
-    Compute kernel matrix for data with RBF kernel:
-    L_x = [kx(x_i,x_j)]_{1\leq i,j\leq n}
-    param = bandwidth parameter
-    '''
-    kwx = param
-    X = data.reshape((data.size,1))
-    
-    ## compute distance in norm2 between each data points
-    distx = cdist(X, X, 'sqeuclidean')
-    K = np.exp(-0.5 * distx * kwx**-2) #gaussian kernel k(x1,x2) = exp(- 0.5 *||x1-x2||^2 * \sigma_x^-2)
 
-    return K
 
 def meannondiag(A):
     """
@@ -196,15 +261,19 @@ def det_with_lu(K):
     return det
 
 
-##############################
+
 
 ############################################################
-###########  GAMMA APPROXIMATION FUNCTION  #################
+###########  GAMMA APPROXIMATION FUNCTION I.I.D. #################
 ############################################################
 
 def get_asymptotic_gamma_params(Kx, Ky):
     '''
-    
+    asymptotic gamma parameters 
+    source: A kernel statistical test of independence, Gretton et al. 2007
+    parameters:
+        - Kx: double-centered Gram matrix for X
+        - Ky: same for Y
     '''
     n = Kx.shape[0] 
     ## mean of diag coeffs
@@ -263,6 +332,12 @@ def get_kappa(Kx,Ky):
     theta_appr = var_appr / mean_appr
     params = {'shape': k_appr, 'scale': theta_appr }
     return params
+
+
+
+
+
+
 
 
 
@@ -446,6 +521,11 @@ def pearson3_param_cpt(LXi, LY):
 ########### Random Fourier Features approx ###########
 ######################################################
 
+
+
+
+
+
 def generate_RFF(X, D, sigma):
     """
     Compute an approximate covariance matrix from
@@ -476,8 +556,9 @@ def generate_RFF(X, D, sigma):
     Z2 = np.sin(XWt)
     
     # Compute random Fourier features Z 
-    Z = np.sqrt(1 / D) * np.hstack((Z1,Z2))
-    
+    # Z = np.sqrt(1 / D) * np.hstack((Z1,Z2))
+    Z = np.sqrt(1/D) * np.hstack((Z1,Z2))
+    # print('shape Z = ', np.shape(Z))
     return Z
 
 def compute_RFF_hsic(Zx,Zy):
@@ -486,16 +567,142 @@ def compute_RFF_hsic(Zx,Zy):
     - Zy : RFF matrix of size (n x Dy)
     
     return
-    - T : RFF estimator of HSIC 
+    - stat : RFF estimator of HSIC 
+    '''
+    n = Zx.shape[0]
+    # H = np.eye(n) - np.ones((n, n)) / n  # Centering matrix
+    ## center feature matrices
+    # Zx_c = H @ Zx                        
+    Zy_c = Zy - np.mean(Zy, axis=0, keepdims=True)  # Efficient H @ Zy
+    
+    product = Zx.T @ Zy_c             # (2D x 2D) matrix
+    
+    stat = np.sum(product**2) / (n**2)  # Frobenius norm squared / n^2
+    
+    return stat
+
+
+
+def rff_center_matrix(Z):
+    """ Efficient centering of matrix Z, without explicitly forming centering matrix """
+    n = Z.shape[0]  # Number of samples (rows)
+    
+    # Compute row and column means efficiently
+    row_means = np.mean(Z, axis=0)  # Shape (1, D)
+    col_means = np.mean(Z, axis=1)  # Shape (n,)
+    
+    # Subtract row means from each row and column means from each column
+    Z_centered = Z - row_means
+    Z_centered = Z_centered - col_means[:, np.newaxis]
+    
+    return Z_centered
+
+
+def RFF_gamma_params(Zx, Zy):
+    '''
+    Compute the gamma parameters using the approximation of the Gram matrices
+    \Lx \approx \Zx \Zx^T and $\Ly \approx \Zy \Zy^T
     '''
     n = np.shape(Zx)[0]
-    # H = np.identity(n) - 1/n
-    Zx_centered = Zx - np.mean(Zx, axis=0, keepdims=True)
-    Zy_centered = Zy - np.mean(Zy, axis=0, keepdims=True)
 
-    # Calculate the RFF HSIC statistic
-    T = 1/(n**2) * linalg.norm(Zx_centered.T @ Zy_centered)**2
-    ## compute test statistic
-    # T = 1/(n**2) * np.linalg.norm(Zx.T @ H @ Zy)**2
+    # Center the feature matrices directly
+    Zx_c = Zx - np.mean(Zx, axis=0, keepdims=True)  # shape (n x D)
+    Zy_c = Zy - np.mean(Zy, axis=0, keepdims=True)  # shape (n x D)
+
+    # Compute feature covariances (D x D)
+    tZx = Zx_c.T @ Zx_c
+    tZy = Zy_c.T @ Zy_c
+    # Compute the expectations (traces)
     
-    return T
+    tr_tZx = np.trace(tZx)  # Trace of tZx
+    tr_tZy = np.trace(tZy)  # Trace of tZy
+    
+    # Compute the squared traces
+
+    tr_tZx_squared = np.sum(tZx**2)  # Trace of tZx^2
+    tr_tZy_squared = np.sum(tZy**2)  # Trace of tZy^2
+    
+    # Compute the expectation and variance
+    n = Zx.shape[0]  # Number of samples 
+    E_Sn = (1 / n**2) * tr_tZx * tr_tZy  # Expectation of S_n
+    Var_Sn = (2 / n**4) * tr_tZx_squared * tr_tZy_squared  # Variance of S_n
+    
+    # Compute Gamma parameters
+    beta = (E_Sn ** 2) / Var_Sn
+    gamma = Var_Sn / (n * E_Sn)
+    
+    return {'shape': beta, 'scale': gamma}
+
+# def RFF_gamma_params(Zx, Zy):
+#     '''
+#     Compute parameters of the Gamma approximation
+#     Consider the Covariance matrices $\Zx^T\Zx$ and $\Zy^T \Zy$
+#     to replace the Gram matrices 
+    
+#     '''
+#     # Center the feature matrices
+#     mean_Zx = np.mean(Zx, axis=0)
+#     mean_Zy = np.mean(Zy, axis=0)
+
+#     centered_Zx = Zx - mean_Zx
+#     centered_Zy = Zy - mean_Zy
+
+#     # Compute the centered covariance matrices
+#     Cx = centered_Zx.T @ centered_Zx  # size (2D x 2D)
+#     Cy = centered_Zy.T @ centered_Zy  # size (2D x 2D)
+
+#     # Compute the expectations (traces)
+#     tr_Cx = np.trace(Cx)  # Trace of Cx
+#     tr_Cy = np.trace(Cy)  # Trace of Cy
+
+#     # Compute the squared traces
+#     tr_Cx_squared = np.trace(Cx @ Cx)  # Trace of Cx^2
+#     tr_Cy_squared = np.trace(Cy @ Cy)  # Trace of Cy^2
+
+#     # Compute the expectation and variance
+#     n = Zx.shape[0]  # Number of samples
+#     E_Sn = (1 / n**2) * tr_Cx * tr_Cy  # Expectation of S_n
+#     Var_Sn = (2 / n**4) * tr_Cx_squared * tr_Cy_squared  # Variance of S_n
+
+#     # Compute Gamma parameters
+#     beta = (E_Sn ** 2) / Var_Sn
+#     gamma = Var_Sn / (n * E_Sn)
+
+#     return {'shape': beta, 'scale': gamma}
+
+# def RFF_gamma_params(Zx,Zy):
+
+#     '''
+#     n: sample size
+#     Zx: such that Lx \approx Zx^T Zx
+#     '''
+#     ## center covariance matrices
+#     n = np.shape(Zx)[0]
+#     # Zx = Zx - np.mean(Zx, axis=0, keepdims=True)
+#     tZx = center_rff_matrix(Zx)@ center_rff_matrix(Zx).T
+#     tZy = center_rff_matrix(Zy) @ center_rff_matrix(Zy).T
+#     # Zy = Zy - np.mean(Zy, axis=0, keepdims=True)
+#     print('shape Zx: ',np.shape(tZx))
+    
+#     # mean_appr = np.trace(Zx) * np.trace(Zy) / n
+#     # var_appr = 2 * np.sum(Zx ** 2) * np.sum(Zy ** 2) / n**2 # same as np.sum(Kx * Kx.T) ..., here Kx is symmetric
+    
+#     # k_appr = mean_appr ** 2 / var_appr
+#     # theta_appr = var_appr / mean_appr
+#     # params = {'shape': k_appr, 'scale': theta_appr }
+#     # return params
+    
+#         # Compute trace-based estimates
+#     trace_tZx = np.trace(tZx)
+#     trace_tZy = np.trace(tZy)
+#     trace_tZx2 = np.trace(tZx @ tZx)
+#     trace_tZy2 = np.trace(tZy @ tZy)
+
+#     # Compute expectation and variance
+#     expectation = (1 / n) * trace_tZx * trace_tZy
+#     variance = (2 / n**2) * trace_tZx2 * trace_tZy2
+#         # Compute gamma parameters
+#     beta = expectation**2 / variance
+#     gamma_scale = variance / (n* expectation)  # Scale parameter for scipy's gamma
+    
+#     return {'shape': beta, 'scale': gamma_scale}
